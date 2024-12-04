@@ -1,6 +1,7 @@
 import { makePersisted } from '@solid-primitives/storage'
 import {
   IconBrandSpeedtest,
+  IconChevronRight,
   IconReload,
   IconSettings,
 } from '@tabler/icons-solidjs'
@@ -92,7 +93,26 @@ export default () => {
     e.stopPropagation()
     void proxyGroupLatencyTest(groupName)
   }
-
+  /**
+   * transform an SVG into a data URI
+   * @see https://gist.github.com/jennyknuth/222825e315d45a738ed9d6e04c7a88d0
+   */
+  const encodeSvg = (svg: string) => {
+    return svg
+      .replace(
+        '<svg',
+        ~svg.indexOf('xmlns')
+          ? '<svg'
+          : '<svg xmlns="http://www.w3.org/2000/svg"',
+      )
+      .replace(/"/g, "'")
+      .replace(/%/g, '%25')
+      .replace(/#/g, '%23')
+      .replace(/\{/g, '%7B')
+      .replace(/\}/g, '%7D')
+      .replace(/</g, '%3C')
+      .replace(/>/g, '%3E')
+  }
   const onProxyProviderLatencyTestClick = (
     e: MouseEvent,
     providerName: string,
@@ -179,13 +199,15 @@ export default () => {
               <For each={renderProxies()}>
                 {(proxyGroup) => {
                   const sortedProxyNames = createMemo(() =>
-                    filterProxiesByAvailability(
-                      sortProxiesByOrderingType(
-                        proxyGroup.all ?? [],
-                        proxiesOrderingType(),
-                      ),
-                      hideUnAvailableProxies(),
-                    ),
+                    filterProxiesByAvailability({
+                      proxyNames: sortProxiesByOrderingType({
+                        proxyNames: proxyGroup.all ?? [],
+                        orderingType: proxiesOrderingType(),
+                        testUrl: proxyGroup.testUrl || null,
+                      }),
+                      enabled: hideUnAvailableProxies(),
+                      testUrl: proxyGroup.testUrl || null,
+                    }),
                   )
 
                   const title = (
@@ -193,13 +215,33 @@ export default () => {
                       <div class="flex items-center justify-between pr-8">
                         <div class="flex items-center">
                           <Show when={proxyGroup.icon}>
-                            <img
-                              src={proxyGroup.icon}
-                              style={{
-                                height: `${iconHeight()}px`,
-                                'margin-right': `${iconMarginRight()}px`,
-                              }}
-                            />
+                            <Show
+                              when={proxyGroup.icon!.startsWith(
+                                'data:image/svg+xml',
+                              )}
+                              fallback={
+                                <img
+                                  src={proxyGroup.icon}
+                                  style={{
+                                    height: `${iconHeight()}px`,
+                                    'margin-right': `${iconMarginRight()}px`,
+                                  }}
+                                />
+                              }
+                            >
+                              <div
+                                style={{
+                                  height: `${iconHeight()}px`,
+                                  width: `${iconHeight()}px`,
+                                  color:
+                                    'oklch(var(--p) / var(--tw-bg-opacity))',
+                                  'background-color': 'currentColor',
+                                  'margin-right': `${iconMarginRight()}px`,
+                                  'mask-image': `url("${encodeSvg(proxyGroup.icon!)}")`,
+                                  'mask-size': '100% 100%',
+                                }}
+                              />
+                            </Show>
                           </Show>
                           <span>{proxyGroup.name}</span>
                           <div class="badge badge-sm ml-2">
@@ -233,8 +275,8 @@ export default () => {
                             {formatProxyType(proxyGroup.type)}
                           </span>
                           <Show when={proxyGroup.now?.length > 0}>
+                            <IconChevronRight size={18}/>
                             <span class="whitespace-nowrap">
-                              &nbsp;::&nbsp;
                               {proxyGroup.now}
                             </span>
                           </Show>
@@ -252,6 +294,7 @@ export default () => {
                         <ProxyNodePreview
                           proxyNameList={sortedProxyNames()}
                           now={proxyGroup.now}
+                          testUrl={proxyGroup.testUrl || null}
                         />
                       </Show>
                     </div>
@@ -269,6 +312,8 @@ export default () => {
                         {(proxyName) => (
                           <ProxyNodeCard
                             proxyName={proxyName}
+                            testUrl={proxyGroup.testUrl || null}
+                            timeout={proxyGroup.timeout ?? null}
                             isSelected={proxyGroup.now === proxyName}
                             onClick={() =>
                               void selectProxyInGroup(proxyGroup, proxyName)
@@ -288,20 +333,26 @@ export default () => {
               <For each={proxyProviders()}>
                 {(proxyProvider) => {
                   const sortedProxyNames = createMemo(() =>
-                    sortProxiesByOrderingType(
-                      proxyProvider.proxies.map((i) => i.name) ?? [],
-                      proxiesOrderingType(),
-                    ),
+                    sortProxiesByOrderingType({
+                      orderingType: proxiesOrderingType(),
+                      proxyNames:
+                        proxyProvider.proxies.map((i) => i.name) ?? [],
+                      testUrl: proxyProvider.testUrl,
+                    }),
                   )
 
                   const title = (
                     <>
                       <div class="flex items-center justify-between pr-8">
-                        <div class="flex items-center gap-2">
-                          <span>{proxyProvider.name}</span>
+                        <div class="flex flex-wrap items-center gap-1">
+                          <span class="line-clamp-1 break-all">{proxyProvider.name}</span>
 
                           <div class="badge badge-sm">
                             {proxyProvider.proxies.length}
+                          </div>
+
+                          <div class="badge badge-sm">
+                            {proxyProvider.vehicleType}
                           </div>
                         </div>
 
@@ -353,12 +404,15 @@ export default () => {
                       />
 
                       <div class="text-sm text-slate-500">
-                        {proxyProvider.vehicleType} :: {t('updated')}{' '}
+                        {t('updated')}{' '}
                         {formatTimeFromNow(proxyProvider.updatedAt)}
                       </div>
 
                       <Show when={!collapsedMap()[proxyProvider.name]}>
-                        <ProxyNodePreview proxyNameList={sortedProxyNames()} />
+                        <ProxyNodePreview
+                          proxyNameList={sortedProxyNames()}
+                          testUrl={proxyProvider.testUrl}
+                        />
                       </Show>
                     </>
                   )
@@ -372,7 +426,13 @@ export default () => {
                       }
                     >
                       <For each={sortedProxyNames()}>
-                        {(proxyName) => <ProxyNodeCard proxyName={proxyName} />}
+                        {(proxyName) => (
+                          <ProxyNodeCard
+                            proxyName={proxyName}
+                            testUrl={proxyProvider.testUrl}
+                            timeout={proxyProvider.timeout ?? null}
+                          />
+                        )}
                       </For>
                     </Collapse>
                   )
